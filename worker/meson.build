@@ -74,6 +74,7 @@ common_sources = [
   'src/RTC/DataProducer.cpp',
   'src/RTC/DirectTransport.cpp',
   'src/RTC/DtlsTransport.cpp',
+  'src/RTC/Histogram.cpp',
   'src/RTC/IceCandidate.cpp',
   'src/RTC/IceServer.cpp',
   'src/RTC/KeyFrameRequestManager.cpp',

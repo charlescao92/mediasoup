@@ -4,6 +4,7 @@
 #include "common.hpp"
 #include "RTC/RtpPacket.hpp"
 #include "RTC/SeqManager.hpp"
+#include "RTC/Histogram.hpp"
 #include "handles/Timer.hpp"
 #include <absl/container/btree_map.h>
 #include <absl/container/btree_set.h>
@@ -68,6 +69,8 @@ namespace RTC
 		bool RemoveNackItemsUntilKeyFrame();
 		std::vector<uint16_t> GetNackBatch(NackFilter filter);
 		void MayRunTimer() const;
+		void UpdateReorderingStat(uint16_t seq_num); // 添加直方图的样本
+		size_t WaitNumberOfPackets(float probability); // 传入概率，获取需要等的包数
 
 		/* Pure virtual methods inherited from Timer::Listener. */
 	public:
@@ -86,6 +89,7 @@ namespace RTC
 		bool started{ false };
 		uint16_t lastSeq{ 0u }; // Seq number of last valid packet.
 		uint32_t rtt{ 0u };     // Round trip time (ms).
+		Histogram reordering_histogram_;
 	};
 } // namespace RTC
 

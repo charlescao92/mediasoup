@@ -16,12 +16,15 @@ namespace RTC
 	static constexpr size_t MaxNackPackets{ 1000u };
 	static constexpr uint32_t DefaultRtt{ 100u };
 	static constexpr uint8_t MaxNackRetries{ 10u };
-	static constexpr uint64_t TimerInterval{ 40u };
+	static constexpr uint64_t TimerInterval{ 20u };
+	static constexpr uint64_t kMaxReorderingPackets{ 128u };
+	static constexpr uint64_t kNumReorderingBuckets{ 10u };
 
 	/* Instance methods. */
 
 	NackGenerator::NackGenerator(Listener* listener, unsigned int sendNackDelayMs)
-	  : listener(listener), sendNackDelayMs(sendNackDelayMs), rtt(DefaultRtt)
+	  : listener(listener), sendNackDelayMs(sendNackDelayMs), rtt(DefaultRtt),
+	  reordering_histogram_(kNumReorderingBuckets, kMaxReorderingPackets)
 	{
 		MS_TRACE();
 
@@ -92,6 +95,7 @@ namespace RTC
 				  "ignoring older packet not present in the NACK list [ssrc:%" PRIu32 ", seq:%" PRIu16 "]",
 				  packet->GetSsrc(),
 				  packet->GetSequenceNumber());
+				UpdateReorderingStat(seq);
 			}
 
 			return false;
@@ -194,7 +198,7 @@ namespace RTC
 			  NackInfo{
 			    DepLibUV::GetTimeMs(),
 			    seq,
-			    seq,
+			    seq + WaitNumberOfPackets(0.5)
 			  }));
 		}
 	}
@@ -351,4 +355,21 @@ namespace RTC
 
 		MayRunTimer();
 	}
+
+	void NackGenerator::UpdateReorderingStat(uint16_t seq_num) {
+		if (SeqManager<uint16_t>::IsSeqLowerThan(seq_num, this->lastSeq)) {
+			//size_t diff = webrtc::ReverseDiff(this->lastSeq, seq_num);
+			size_t diff = this->lastSeq - seq_num;
+	    	reordering_histogram_.Add(diff);
+		}   
+	}
+
+	size_t NackGenerator::WaitNumberOfPackets(float probability) {
+	    if (reordering_histogram_.NumValues() == 0) {
+	        return 0;
+	    }
+
+	    return reordering_histogram_.InverseCdf(probability);
+	}
+
 } // namespace RTC
