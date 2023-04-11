@@ -12,6 +12,8 @@
 #define MODULES_RTP_RTCP_INCLUDE_RTP_RTCP_DEFINES_H_
 
 #include "api/transport/network_types.h"
+#include "api/rtp_headers.h"
+#include "system_wrappers/include/clock.h"
 
 #include "RTC/RTCP/FeedbackRtpTransport.hpp"
 
@@ -20,10 +22,51 @@
 #include <list>
 #include <vector>
 
+#define RTCP_CNAME_SIZE 256  // RFC 3550 page 44, including null termination
+#define IP_PACKET_SIZE 1500  // we assume ethernet
+
 namespace webrtc {
+class RtpPacket;
 namespace rtcp {
 class TransportFeedback;
 }
+
+const int kVideoPayloadTypeFrequency = 90000;
+
+// TODO(bugs.webrtc.org/6458): Remove this when all the depending projects are
+// updated to correctly set rtp rate for RtcpSender.
+const int kBogusRtpRateForAudioRtcp = 8000;
+
+// Minimum RTP header size in bytes.
+const uint8_t kRtpHeaderSize = 12;
+
+// This enum must not have any gaps, i.e., all integers between
+// kRtpExtensionNone and kRtpExtensionNumberOfExtensions must be valid enum
+// entries.
+enum RTPExtensionType : int {
+  kRtpExtensionNone,
+  kRtpExtensionTransmissionTimeOffset,
+  kRtpExtensionAudioLevel,
+  kRtpExtensionAbsoluteSendTime,
+  kRtpExtensionAbsoluteCaptureTime,
+  kRtpExtensionVideoRotation,
+  kRtpExtensionTransportSequenceNumber,
+  kRtpExtensionTransportSequenceNumber02,
+  kRtpExtensionPlayoutDelay,
+  kRtpExtensionVideoContentType,
+  kRtpExtensionVideoTiming,
+  kRtpExtensionFrameMarking,
+  kRtpExtensionRtpStreamId,
+  kRtpExtensionRepairedRtpStreamId,
+  kRtpExtensionMid,
+  kRtpExtensionGenericFrameDescriptor00,
+  kRtpExtensionGenericFrameDescriptor = kRtpExtensionGenericFrameDescriptor00,
+  kRtpExtensionGenericFrameDescriptor01,
+  kRtpExtensionGenericFrameDescriptor02,
+  kRtpExtensionColorSpace,
+  kRtpExtensionNumberOfExtensions  // Must be the last entity in the enum.
+};
+
 
 struct RTCPReportBlock {
   RTCPReportBlock()
@@ -65,6 +108,55 @@ struct RTCPReportBlock {
 };
 
 typedef std::list<RTCPReportBlock> ReportBlockList;
+
+struct RtpState {
+  RtpState()
+      : sequence_number(0),
+        start_timestamp(0),
+        timestamp(0),
+        capture_time_ms(-1),
+        last_timestamp_time_ms(-1),
+        media_has_been_sent(false),
+        ssrc_has_acked(false) {}
+  uint16_t sequence_number;
+  uint32_t start_timestamp;
+  uint32_t timestamp;
+  int64_t capture_time_ms;
+  int64_t last_timestamp_time_ms;
+  bool media_has_been_sent;
+  bool ssrc_has_acked;
+};
+
+// Callback interface for packets recovered by FlexFEC or ULPFEC. In
+// the FlexFEC case, the implementation should be able to demultiplex
+// the recovered RTP packets based on SSRC.
+class RecoveredPacketReceiver {
+ public:
+  virtual void OnRecoveredPacket(const uint8_t* packet, size_t length) = 0;
+
+ protected:
+  virtual ~RecoveredPacketReceiver() = default;
+};
+
+class RtcpIntraFrameObserver {
+ public:
+  virtual ~RtcpIntraFrameObserver() {}
+
+  virtual void OnReceivedIntraFrameRequest(uint32_t ssrc) = 0;
+};
+
+// Observer for incoming LossNotification RTCP messages.
+// See the documentation of LossNotification for details.
+class RtcpLossNotificationObserver {
+ public:
+  virtual ~RtcpLossNotificationObserver() = default;
+
+  virtual void OnReceivedLossNotification(uint32_t ssrc,
+                                          uint16_t seq_num_of_last_decodable,
+                                          uint16_t seq_num_of_last_received,
+                                          bool decodability_flag) = 0;
+};
+
 
 class RtcpBandwidthObserver {
  public:

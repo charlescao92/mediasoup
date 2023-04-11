@@ -6,7 +6,11 @@
 #include "RTC/RateCalculator.hpp"
 #include "RTC/RtpStream.hpp"
 #include "handles/Timer.hpp"
+
+#include <libwebrtc/modules/rtp_rtcp/include/flexfec_receiver.h>
+
 #include <vector>
+#include <memory>
 
 namespace RTC
 {
@@ -45,7 +49,8 @@ namespace RTC
 		RtpStreamRecv(
 		  RTC::RtpStreamRecv::Listener* listener,
 		  RTC::RtpStream::Params& params,
-		  unsigned int sendNackDelayMs);
+		  unsigned int sendNackDelayMs,
+		  std::unique_ptr<webrtc::FlexfecReceiver> flexfecReceiver = nullptr);
 		~RtpStreamRecv();
 
 		void FillJsonStats(json& jsonObject) override;
@@ -75,6 +80,10 @@ namespace RTC
 		{
 			return this->transmissionCounter.GetLayerBitrate(nowMs, spatialLayer, temporalLayer);
 		}
+
+		 // flexfec
+      	bool FecReceivePacket(RTC::RtpPacket* packet, bool isRecover);
+      	bool IsFlexFecPacket(RTC::RtpPacket* packet);
 
 	private:
 		void CalculateJitter(uint32_t rtpTimestamp);
@@ -111,6 +120,9 @@ namespace RTC
 		bool inactive{ false };
 		TransmissionCounter transmissionCounter;      // Valid media + valid RTX.
 		RTC::RtpDataCounter mediaTransmissionCounter; // Just valid media.
+
+    	std::unique_ptr<webrtc::FlexfecReceiver> flexfecReceiver; // flexfec
+		uint64_t packetFecCount{ 0u };
 	};
 } // namespace RTC
 

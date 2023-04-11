@@ -14,6 +14,7 @@
 #include <cstring>  // std::memcpy()
 #include <iterator> // std::ostream_iterator
 #include <sstream>  // std::ostringstream
+#include <memory>
 
 namespace RTC
 {
@@ -477,6 +478,26 @@ namespace RTC
 		}
 	}
 
+	void Producer::OnRecoveredPacket(const uint8_t* packet, size_t length) 
+	{
+		uint8_t packet_temp[length] = {0};
+		
+		memcpy(packet_temp, packet, length);
+		RTC::RtpPacket* recover_packet = RTC::RtpPacket::Parse(packet_temp, length);
+		if (!recover_packet) {
+			MS_WARN_TAG(rtp, "fecrtest recover packet data is not a valid RTP packet length: %zu", length);
+			return;
+		}
+		
+		this->ReceiveRtpPacket(recover_packet, true);
+
+		/*MS_WARN_TAG(rtp,
+				"fec packet recover [ssrc:%" PRIu32 ", payloadType:%" PRIu8 ", seq:%" PRIu16,
+			    recover_packet->GetSsrc(),
+			    recover_packet->GetPayloadType(),
+			    recover_packet->GetSequenceNumber());*/
+	}
+
 	void Producer::HandleRequest(Channel::ChannelRequest* request)
 	{
 		MS_TRACE();
@@ -668,7 +689,7 @@ namespace RTC
 		}
 	}
 
-	Producer::ReceiveRtpPacketResult Producer::ReceiveRtpPacket(RTC::RtpPacket* packet)
+	Producer::ReceiveRtpPacketResult Producer::ReceiveRtpPacket(RTC::RtpPacket* packet, bool isRecover)
 	{
 		MS_TRACE();
 
@@ -697,6 +718,11 @@ namespace RTC
 		if (packet->GetSsrc() == rtpStream->GetSsrc())
 		{
 			result = ReceiveRtpPacketResult::MEDIA;
+
+			// Fec process the packet.
+			if(!rtpStream->FecReceivePacket(packet, isRecover)) {
+				return result;
+			}
 
 			// Process the packet.
 			if (!rtpStream->ReceivePacket(packet))
@@ -1129,6 +1155,14 @@ namespace RTC
 		return nullptr;
 	}
 
+	std::unique_ptr<webrtc::FlexfecReceiver> CreateFlexfecReceiver(
+    						uint32_t ssrc,
+                  			uint32_t protected_media_ssrc,
+    						webrtc::RecoveredPacketReceiver* recovered_packet_receiver) {
+  		return std::unique_ptr<webrtc::FlexfecReceiver>(new webrtc::FlexfecReceiver(
+      			ssrc, protected_media_ssrc, recovered_packet_receiver));
+	}
+
 	RTC::RtpStreamRecv* Producer::CreateRtpStream(
 	  RTC::RtpPacket* packet, const RTC::RtpCodecParameters& mediaCodec, size_t encodingIdx)
 	{
@@ -1191,6 +1225,15 @@ namespace RTC
 			params.useDtx = true;
 		}
 
+		// Check FlexFec in codec parameters.
+		if (params.mimeType.subtype == RTC::RtpCodecMimeType::Subtype::FLEXFEC)
+		{
+			MS_DEBUG_TAG(rtp, "flexfec enabled");
+
+			params.useFlexFec = true;
+			params.fecPayloadType = mediaCodec.payloadType;
+		}
+
 		for (const auto& fb : mediaCodec.rtcpFeedback)
 		{
 			if (!params.useNack && fb.type == "nack" && fb.parameter.empty())
@@ -1213,9 +1256,16 @@ namespace RTC
 			}
 		}
 
-		// Create a RtpStreamRecv for receiving a media stream.
-		auto* rtpStream = new RTC::RtpStreamRecv(this, params, SendNackDelay);
+		RTC::RtpStreamRecv* rtpStream = nullptr;
 
+		// Create a RtpStreamRecv for receiving a media stream.
+		if (!params.useFlexFec) {
+			rtpStream = new RTC::RtpStreamRecv(this, params, SendNackDelay);
+		} else {
+			auto flexfecReceiver = CreateFlexfecReceiver(params.ssrc, params.ssrc, this);
+			rtpStream = new RTC::RtpStreamRecv(this, params, SendNackDelay, std::move(flexfecReceiver));		
+		}
+	
 		// Insert into the maps.
 		this->mapSsrcRtpStream[ssrc]              = rtpStream;
 		this->rtpStreamByEncodingIdx[encodingIdx] = rtpStream;

@@ -51,10 +51,12 @@ namespace RTC
 			bool useNack{ false };
 			bool usePli{ false };
 			bool useFir{ false };
-			bool useInBandFec{ false };
+			bool useInBandFec{ false }; // opus fec
 			bool useDtx{ false };
 			uint8_t spatialLayers{ 1u };
 			uint8_t temporalLayers{ 1u };
+			bool useFlexFec{ false };
+			uint8_t fecPayloadType{ 0u };
 		};
 
 	public:

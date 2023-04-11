@@ -181,9 +181,11 @@ namespace RTC
 	}
 
 	/* Instance methods. */
-
 	RtpStreamRecv::RtpStreamRecv(
-	  RTC::RtpStreamRecv::Listener* listener, RTC::RtpStream::Params& params, unsigned int sendNackDelayMs)
+	  		RTC::RtpStreamRecv::Listener* listener, 
+	  		RTC::RtpStream::Params& params, 
+	  		unsigned int sendNackDelayMs,
+			std::unique_ptr<webrtc::FlexfecReceiver> pFlexfecReceiver)
 	  : RTC::RtpStream::RtpStream(listener, params, 10), sendNackDelayMs(sendNackDelayMs),
 	    transmissionCounter(
 	      params.spatialLayers, params.temporalLayers, this->params.useDtx ? 6000 : 2500)
@@ -202,6 +204,10 @@ namespace RTC
 			this->inactivityCheckPeriodicTimer->Start(InactivityCheckInterval);
 		else
 			this->inactivityCheckPeriodicTimer->Start(InactivityCheckIntervalWithDtx);
+
+		if (pFlexfecReceiver) {
+			flexfecReceiver = std::move(pFlexfecReceiver);
+		}
 	}
 
 	RtpStreamRecv::~RtpStreamRecv()
@@ -864,4 +870,44 @@ namespace RTC
 
 		RequestKeyFrame();
 	}
+
+	bool RtpStreamRecv::IsFlexFecPacket(RTC::RtpPacket* packet) 
+	{
+		if (packet == nullptr) return false;
+    	return packet->GetPayloadType() == params.fecPayloadType ? true : false;
+	}
+
+ 	bool RtpStreamRecv::FecReceivePacket(RTC::RtpPacket* packet, bool isRecover)
+	{
+  		if (!this->params.useFlexFec) 
+			return true;
+
+		if (!IsFlexFecPacket(packet)) {
+			return true;
+  		}
+		
+  		MS_WARN_TAG(rtp,
+  				"fec packet receive [ssrc:%" PRIu32 ", payloadType:%" PRIu8 ", seq:%" PRIu16,
+  				packet->GetSsrc(),
+  				packet->GetPayloadType(),
+  				packet->GetSequenceNumber());
+
+  		if (flexfecReceiver) {
+  			webrtc::RtpPacketReceived parsed_packet(nullptr);
+  			if (!parsed_packet.Parse(packet->GetData(), packet->GetSize())) {
+  					MS_WARN_TAG(rtp, "receive fec packet but parsed_packet failed!");
+  					return false;
+  			}
+			parsed_packet.set_recovered(isRecover);
+  			flexfecReceiver->OnRtpPacket(parsed_packet);
+			
+  		} else {
+  			MS_WARN_TAG(rtp, "receive fec packet but receiver is not exit");
+  		}
+		
+		packetFecCount++;
+  		
+		return true;
+	}
+
 } // namespace RTC
